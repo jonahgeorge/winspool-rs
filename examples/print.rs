@@ -29,7 +29,7 @@ fn main() {
                     let receipt = r#"
 Hello world.
 
-This took way to long to figure out :)
+This took way too long to figure out :)
 
 
                     "#;
