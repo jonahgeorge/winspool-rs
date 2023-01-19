@@ -1,5 +1,5 @@
 use memalloc::allocate;
-use std::ffi::{CString, OsStr, OsString};
+use std::ffi::{CString, OsStr};
 use std::os::windows::ffi::OsStrExt;
 use std::{ptr, slice};
 use winapi::ctypes::c_void;
@@ -10,38 +10,41 @@ use winapi::um::winspool::{
     PRINTER_INFO_4W,
 };
 
-pub fn open_printer(printer_name: String) -> Option<*mut c_void> {
+trait ToU16VecWithNulTerminator {
+    fn to_u16_vec_with_nul_terminator(&self) -> Vec<u16>;
+}
+
+impl ToU16VecWithNulTerminator for str {
+    fn to_u16_vec_with_nul_terminator(&self) -> Vec<u16> {
+        OsStr::new(self)
+            .encode_wide()
+            .chain(Some(0).into_iter())
+            .collect::<Vec<_>>()
+    }
+}
+
+pub fn open_printer(printer_name: &str) -> Option<*mut c_void> {
     let mut handle = ptr::null_mut();
 
-    let name = OsString::from(printer_name)
-        .encode_wide()
-        .chain(Some(0).into_iter())
-        .collect::<Vec<_>>();
-
-    match unsafe { OpenPrinterW(name.as_ptr() as *mut _, &mut handle, ptr::null_mut()) } {
+    match unsafe {
+        OpenPrinterW(
+            printer_name.to_u16_vec_with_nul_terminator().as_ptr() as *mut _,
+            &mut handle,
+            ptr::null_mut(),
+        )
+    } {
         FALSE => None,
         _ => Some(handle),
     }
 }
 
-pub fn start_doc_printer(handle: *mut c_void) -> DWORD {
-    let doc_name = OsStr::new("RAW Document")
-        .encode_wide()
-        .chain(Some(0).into_iter())
-        .collect::<Vec<_>>();
-
-    // https://learn.microsoft.com/en-us/windows-hardware/drivers/print/raw-data-type
-    // EMF, RAW, TEXT, PSCRIPT1
-    let data_type = OsStr::new("RAW")
-        .encode_wide()
-        .chain(Some(0).into_iter())
-        .collect::<Vec<_>>();
-
+// https://learn.microsoft.com/en-us/windows-hardware/drivers/print/raw-data-type
+// EMF, RAW, TEXT, PSCRIPT1
+pub fn start_doc_printer(handle: *mut c_void, document_name: &str, data_type: &str) -> DWORD {
     let info = DOC_INFO_1W {
-        pDocName: doc_name.as_ptr() as *mut _,
         pOutputFile: ptr::null_mut(),
-
-        pDatatype: data_type.as_ptr() as *mut _,
+        pDocName: document_name.to_u16_vec_with_nul_terminator().as_ptr() as *mut _,
+        pDatatype: data_type.to_u16_vec_with_nul_terminator().as_ptr() as *mut _,
     };
 
     unsafe { StartDocPrinterW(handle, 1, &info as *const DOC_INFO_1W as LPBYTE) }
@@ -51,14 +54,16 @@ pub fn start_page_printer(handle: *mut c_void) -> BOOL {
     unsafe { StartPagePrinter(handle) }
 }
 
-pub fn write_printer(handle: *mut c_void, data: CString) {
+pub fn write_printer(handle: *mut c_void, data: &str) -> BOOL {
     let mut written = 0;
+    let cdat = CString::new(data).unwrap();
+    let buf = cdat.as_bytes_with_nul();
 
-    let buf = data.as_bytes_with_nul();
-
-    unsafe { WritePrinter(handle, buf.as_ptr() as *mut _, buf.len() as _, &mut written) };
+    let res = unsafe { WritePrinter(handle, buf.as_ptr() as *mut _, buf.len() as _, &mut written) };
 
     println!("written: {}", written);
+
+    res
 }
 
 pub fn close_printer(handle: *mut c_void) -> BOOL {
@@ -96,7 +101,7 @@ pub fn list_printers() -> Option<Vec<PRINTER_INFO_4W>> {
         return None;
     }
 
-    let buffer = unsafe { allocate(bytes_needed as usize) };
+    let buffer = unsafe { allocate(bytes_needed as _) };
 
     result = unsafe {
         EnumPrintersW(
@@ -115,7 +120,7 @@ pub fn list_printers() -> Option<Vec<PRINTER_INFO_4W>> {
     }
 
     let printer_info = buffer as PPRINTER_INFO_4W;
-    let printers = unsafe { slice::from_raw_parts(printer_info, count_returned as usize) };
+    let printers = unsafe { slice::from_raw_parts(printer_info, count_returned as _) };
 
     Some(printers.to_vec())
 }

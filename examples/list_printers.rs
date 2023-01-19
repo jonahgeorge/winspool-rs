@@ -1,11 +1,11 @@
+use widestring::WideCString;
 use winspool::list_printers;
 
 fn main() {
     let printers = list_printers().expect("failed to list printers");
 
     for p in printers {
-        let printer_name =
-            unsafe { widestring::WideCString::from_ptr_str(p.pPrinterName).to_string_lossy() };
+        let printer_name = unsafe { WideCString::from_ptr_str(p.pPrinterName).to_string_lossy() };
         println!("{}", printer_name);
     }
 }
