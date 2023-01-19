@@ -1,0 +1,13 @@
+[package]
+name = "winspool"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+memalloc = "0.1.0"
+widestring = "0.2.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winspool"] }
