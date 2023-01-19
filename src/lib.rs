@@ -1,83 +1,64 @@
 use memalloc::allocate;
-use std::ffi::OsString;
-use std::io::Error;
-use std::os::windows::prelude::*;
-use std::ptr;
-use std::slice;
-use std::str::FromStr;
+use std::ffi::{CString, OsStr, OsString};
+use std::os::windows::ffi::OsStrExt;
+use std::{ptr, slice};
 use winapi::ctypes::c_void;
-use winapi::shared::minwindef::BOOL;
-use winapi::shared::minwindef::DWORD;
-use winapi::shared::minwindef::FALSE;
+use winapi::shared::minwindef::{BOOL, DWORD, FALSE, LPBYTE};
 use winapi::um::winspool::{
     ClosePrinter, EndDocPrinter, EndPagePrinter, EnumPrintersW, OpenPrinterW, StartDocPrinterW,
     StartPagePrinter, WritePrinter, DOC_INFO_1W, PPRINTER_INFO_4W, PRINTER_ENUM_LOCAL,
     PRINTER_INFO_4W,
 };
 
-pub fn open_printer(printer_name: &str) -> Option<*mut c_void> {
+pub fn open_printer(printer_name: String) -> Option<*mut c_void> {
     let mut handle = ptr::null_mut();
 
-    let name = OsString::from_str(printer_name)
-        .unwrap()
+    let name = OsString::from(printer_name)
         .encode_wide()
-        .collect::<Vec<_>>()
-        .as_mut_ptr();
+        .chain(Some(0).into_iter())
+        .collect::<Vec<_>>();
 
-    match unsafe { OpenPrinterW(name, &mut handle, ptr::null_mut()) } {
-        FALSE => {
-            println!("{}", Error::last_os_error());
-
-            None
-        }
+    match unsafe { OpenPrinterW(name.as_ptr() as *mut _, &mut handle, ptr::null_mut()) } {
+        FALSE => None,
         _ => Some(handle),
     }
 }
 
-pub fn start_doc_printer(handle: *mut c_void, doc_name: &str) -> DWORD {
-    let info = DOC_INFO_1W {
-        pDocName: OsString::from_str(doc_name)
-            .unwrap()
-            .encode_wide()
-            .collect::<Vec<_>>()
-            .as_mut_ptr(),
+pub fn start_doc_printer(handle: *mut c_void) -> DWORD {
+    let doc_name = OsStr::new("RAW Document")
+        .encode_wide()
+        .chain(Some(0).into_iter())
+        .collect::<Vec<_>>();
 
+    // https://learn.microsoft.com/en-us/windows-hardware/drivers/print/raw-data-type
+    // EMF, RAW, TEXT, PSCRIPT1
+    let data_type = OsStr::new("RAW")
+        .encode_wide()
+        .chain(Some(0).into_iter())
+        .collect::<Vec<_>>();
+
+    let info = DOC_INFO_1W {
+        pDocName: doc_name.as_ptr() as *mut _,
         pOutputFile: ptr::null_mut(),
 
-        // https://learn.microsoft.com/en-us/windows-hardware/drivers/print/raw-data-type
-        // EMF, RAW, TEXT, PSCRIPT1
-        pDatatype: OsString::from_str("EMF")
-            .unwrap()
-            .encode_wide()
-            .collect::<Vec<_>>()
-            .as_mut_ptr(),
+        pDatatype: data_type.as_ptr() as *mut _,
     };
 
-    let b = unsafe {
-        std::slice::from_raw_parts_mut(
-            &info as *const DOC_INFO_1W as *mut u8,
-            std::mem::size_of::<DOC_INFO_1W>(),
-        )
-    };
-
-    unsafe { StartDocPrinterW(handle, 1, b.as_mut_ptr()) }
+    unsafe { StartDocPrinterW(handle, 1, &info as *const DOC_INFO_1W as LPBYTE) }
 }
 
 pub fn start_page_printer(handle: *mut c_void) -> BOOL {
     unsafe { StartPagePrinter(handle) }
 }
 
-pub fn write_printer(handle: *mut c_void, data: &str) {
+pub fn write_printer(handle: *mut c_void, data: CString) {
     let mut written = 0;
 
-    let write = unsafe {
-        WritePrinter(
-            handle,
-            data.as_ptr() as *mut c_void,
-            data.len() as DWORD,
-            &mut written,
-        )
-    };
+    let buf = data.as_bytes_with_nul();
+
+    unsafe { WritePrinter(handle, buf.as_ptr() as *mut _, buf.len() as _, &mut written) };
+
+    println!("written: {}", written);
 }
 
 pub fn close_printer(handle: *mut c_void) -> BOOL {
